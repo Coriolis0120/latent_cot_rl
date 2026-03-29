@@ -1,0 +1,46 @@
+# 单卡 RTX 5090 训练配置
+# ========================================
+# 显存: 32GB GDDR7
+# 架构: Blackwell, ~21760 CUDA cores
+
+# 模型配置
+model:
+  model_id: "openai-community/gpt2"
+  local_path: "./models/gpt2"
+
+# COCONUT参数
+coconut:
+  c_thought: 1              # 每步思考的latent数量
+  max_latent_stage: 4       # 最大stage数 (4个latent)
+  epochs_per_stage: 3       # 每个stage的epoch数
+  pad_latent_to_max: true
+
+# 训练参数 (针对32GB显存优化)
+training:
+  batch_size: 32           # 32GB显存可用大batch
+  gradient_accumulation_steps: 1
+  num_epochs: 20
+  lr: 0.0001
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  fp16: true              # 使用fp16节省显存
+
+# 数据配置
+data:
+  train_path: "data/prosqa_train.json"
+  val_path: "data/prosqa_valid.json"
+  max_train_samples: 10000
+  max_val_samples: 500
+
+# 评估配置
+evaluation:
+  eval_every: 2
+  save_best_only: true
+
+# 其他配置
+misc:
+  seed: 42
+  save_path: "./checkpoints"
+  use_wandb: true
+  wandb_project: "latent-cot-rl"
+  debug: false
