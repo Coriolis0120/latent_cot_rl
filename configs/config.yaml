@@ -1,0 +1,54 @@
+# Latent CoT with RL 配置文件
+# ========================================
+
+# 模型配置
+model:
+  name: "gpt2"              # 使用gpt2-small (124M参数)
+  model_id: "openai-community/gpt2"
+  local_path: "./models/gpt2"  # 本地路径（下载后使用）
+  max_length: 128
+
+# COCONUT参数
+coconut:
+  c_thought: 1              # 每步思考的latent数量
+  max_latent_stage: 3       # 最大stage数
+  epochs_per_stage: 2       # 每个stage的epoch数
+  pad_latent_to_max: true
+
+# RL参数
+rl:
+  lr: 0.0001                # RL学习率
+  hidden_dim: 256           # 策略网络隐藏层维度
+  efficiency_penalty: 0.05  # 效率惩罚系数 (每个latent扣多少)
+  max_thinking_steps: 10    # 最大思考步数 (防止无限循环)
+  gamma: 0.99               # 折扣因子 (可选，用于多步RL)
+  entropy_coef: 0.01        # 熵正则化 (鼓励探索)
+
+# 训练参数
+training:
+  batch_size: 4             # 批次大小
+  gradient_accumulation_steps: 4  # 梯度累积
+  num_epochs: 10            # 训练轮数
+  lr: 0.0001                # 学习率
+  weight_decay: 0.01        # 权重衰减
+  warmup_steps: 100         # 预热步数
+
+# 数据配置
+data:
+  train_path: "data/prosqa_train.json"
+  val_path: "data/prosqa_valid.json"
+  max_train_samples: 1000   # 最大训练样本数 (用于快速测试)
+  max_val_samples: 100      # 最大验证样本数
+
+# 评估配置
+evaluation:
+  eval_every: 2             # 每几个epoch评估一次
+  save_best_only: true      # 只保存最佳模型
+  metric: "accuracy"        # 评估指标
+
+# 其他配置
+misc:
+  seed: 42
+  save_path: "./checkpoints"
+  use_wandb: false          # 是否使用wandb
+  debug: true               # 调试模式 (小数据量)
