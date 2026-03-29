@@ -1,0 +1,42 @@
+# 集群训练配置
+# ========================================
+
+# 模型配置
+model:
+  model_id: "openai-community/gpt2"
+  local_path: "./models/gpt2"  # 如果已下载到本地
+
+# COCONUT参数
+coconut:
+  c_thought: 1              # 每步思考的latent数量
+  max_latent_stage: 4       # 最大stage数
+  epochs_per_stage: 3       # 每个stage的epoch数
+
+# 训练参数 (针对5090优化)
+training:
+  batch_size: 16            # 5090可以用更大的batch
+  gradient_accumulation_steps: 2
+  num_epochs: 20
+  lr: 0.0001
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+
+# 数据配置
+data:
+  train_path: "data/prosqa_train.json"
+  val_path: "data/prosqa_valid.json"
+  max_train_samples: 10000   # 使用更多数据
+  max_val_samples: 500
+
+# 评估配置
+evaluation:
+  eval_every: 2
+  save_best_only: true
+
+# 其他配置
+misc:
+  seed: 42
+  save_path: "./checkpoints"
+  use_wandb: true           # 建议开启wandb记录
+  wandb_project: "latent-cot-rl"
+  debug: false
