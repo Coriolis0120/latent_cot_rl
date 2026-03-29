@@ -170,9 +170,17 @@ def generate_dataset(
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train_size", type=int, default=5000)
+    parser.add_argument("--val_size", type=int, default=500)
+    parser.add_argument("--output_dir", type=str, default="data")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
     generate_dataset(
-        output_dir="data/arithmetic",
-        train_size=500,
-        val_size=100,
-        seed=42
+        output_dir=args.output_dir,
+        train_size=args.train_size,
+        val_size=args.val_size,
+        seed=args.seed
     )

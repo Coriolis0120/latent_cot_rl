@@ -27,9 +27,9 @@ training:
 
 # 数据配置
 data:
-  train_path: "data/prosqa_train.json"
-  val_path: "data/prosqa_valid.json"
-  max_train_samples: 10000
+  train_path: "data/train.json"
+  val_path: "data/val.json"
+  max_train_samples: 5000
   max_val_samples: 500
 
 # 评估配置
