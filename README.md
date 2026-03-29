@@ -2,49 +2,7 @@
 
 基于COCONUT的变长潜在思维链研究，使用强化学习学习何时停止思考。
 
-## 快速开始
-
-### 本地单卡训练
-
-```bash
-# 1. 安装依赖
-pip install -r requirements.txt
-
-# 2. 下载模型
-python -c "from transformers import GPT2LMHeadModel, GPT2Tokenizer; \
-GPT2LMHeadModel.from_pretrained('openai-community/gpt2').save_pretrained('./models/gpt2'); \
-GPT2Tokenizer.from_pretrained('openai-community/gpt2').save_pretrained('./models/gpt2')"
-
-# 3. 训练
-python scripts/train_dist.py --config configs/config.yaml
-```
-
-### 集群多卡训练 (Slurm)
-
-```bash
-# 提交作业
-sbatch scripts/slurm_train.sh
-
-# 或交互式运行
-srun --gres=gpu:4 torchrun --nproc_per_node=4 scripts/train_dist.py --config configs/config_cluster.yaml
-```
-
-## 项目结构
-
-```
-latent_cot_rl/
-├── CLAUDE.md              # 详细研究文档 ⭐
-├── configs/
-│   ├── config.yaml        # 基础配置
-│   └── config_cluster.yaml # 集群配置
-├── scripts/
-│   ├── train_dist.py      # 分布式训练脚本
-│   └── slurm_train.sh     # Slurm提交脚本
-├── models/                # 模型存放目录
-└── data/                  # 数据目录
-```
-
-## 核心思想
+## 禂述
 
 ```
 传统CoT:  问题 → "文字思考过程" → 答案
@@ -54,15 +12,59 @@ COCONUT:  问题 → [向量×固定长度] → 答案
                  RL决定何时停止
 ```
 
-## Slurm配置说明
-
-`scripts/slurm_train.sh` 中可以修改：
+## 环境配置 (Conda)
 
 ```bash
-#SBATCH --gres=gpu:4      # GPU数量
-#SBATCH --time=24:00:00   # 运行时间
-#SBATCH --partition=gpu   # 分区名称
+# 克隆仓库
+git clone git@github.com:Coriolis0120/latent_cot_rl.git
+cd latent_cot_rl
+
+# 运行安装脚本
+bash setup.sh
+
+# 激活环境
+conda activate latent_cot
 ```
+
+## 训练
+
+### 单卡训练 (推荐)
+
+```bash
+conda activate latent_cot
+python scripts/train_single.py --config configs/config_5090.yaml
+```
+
+### 多卡训练 (如需要)
+
+```bash
+conda activate latent_cot
+torchrun --nproc_per_node=4 scripts/train_dist.py --config configs/config_cluster.yaml
+```
+
+## 项目结构
+
+```
+latent_cot_rl/
+├── CLAUDE.md              # 详细研究文档 ⭐
+├── environment.yml        # Conda环境配置
+├── setup.sh               # 一键安装脚本
+├── configs/
+│   ├── config_5090.yaml   # 单卡5090配置
+│   └── config_cluster.yaml # 多卡集群配置
+├── scripts/
+│   ├── train_single.py    # 单卡训练
+│   └── train_dist.py      # 分布式训练
+└── models/                # 模型存放目录
+```
+
+## 硬件要求
+
+| 配置 | GPU | 显存 | Batch Size |
+|------|-----|------|------------|
+| 最小 | 任意 | 12GB | 4 |
+| 推荐 | 5090 | 32GB | 32 |
+| 集群 | 4×5090 | 128GB | 64 |
 
 ## 详细文档
 
