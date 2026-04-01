@@ -65,13 +65,20 @@ class Coconut(nn.Module):
             for i in range(len(cache.key_cache)):
                 cache.key_cache[i] = cache.key_cache[i][:, :, :trim_pos, :]
                 cache.value_cache[i] = cache.value_cache[i][:, :, :trim_pos, :]
-            cache._seen_tokens = trim_pos
+            if hasattr(cache, "_seen_tokens"):
+                cache._seen_tokens = trim_pos
             return cache
-        # Legacy tuple format: (k, v) per layer
-        return tuple(
-            (k[:, :, :trim_pos, :], v[:, :, :trim_pos, :])
-            for k, v in cache
-        )
+        # Legacy tuple format: each layer entry is a tuple of N tensors
+        # (handles (k, v) and (k, v, extra...) formats)
+        trimmed = []
+        for layer_entry in cache:
+            if isinstance(layer_entry, (tuple, list)):
+                trimmed.append(
+                    tuple(t[:, :, :trim_pos, :] for t in layer_entry)
+                )
+            else:
+                trimmed.append(layer_entry)
+        return tuple(trimmed)
 
     def forward(self, input_ids, attention_mask, labels, position_ids, **kwargs):
         """Forward pass with iterative latent hidden state feedback."""
