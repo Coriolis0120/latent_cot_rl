@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Single GPU training script
+Single GPU training script for COCONUT with hidden state feedback.
+
 Usage: python scripts/train_single.py --config configs/config_5090.yaml
 """
 
@@ -18,6 +19,14 @@ from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data.collator import (
+    get_dataset,
+    MyCollator,
+    get_cot_latent_dataset,
+    get_question_latent_dataset,
+)
+from models.coconut import Coconut
 
 
 def set_seed(seed):
@@ -42,102 +51,6 @@ def load_yaml(path):
     import yaml
     with open(path) as f:
         return yaml.safe_load(f)
-
-
-def load_data(path, tokenizer, max_size=10000):
-    """Load and tokenize data"""
-    data = json.load(open(path))[:max_size]
-
-    processed = []
-    for i, sample in enumerate(data):
-        question = sample["question"] + "\n"
-        steps = [s + "\n" for s in sample["steps"]]
-        answer = "### " + sample["answer"] + tokenizer.eos_token
-
-        q_tokens = tokenizer.encode(question, add_special_tokens=True)
-        step_tokens = [tokenizer.encode(s, add_special_tokens=False) for s in steps]
-        a_tokens = tokenizer.encode(answer, add_special_tokens=False)
-
-        processed.append({
-            "question": q_tokens,
-            "steps": step_tokens,
-            "answer": a_tokens,
-            "raw": sample,
-            "idx": i,
-        })
-
-    return processed
-
-
-class CoconutDataset(torch.utils.data.Dataset):
-    """COCONUT dataset"""
-
-    def __init__(self, data, num_latents, start_id, latent_id, end_id):
-        self.data = data
-        self.num_latents = num_latents
-        self.start_id = start_id
-        self.latent_id = latent_id
-        self.end_id = end_id
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        sample = self.data[idx]
-
-        # Build input sequence
-        tokens = sample["question"].copy()
-        tokens.append(self.start_id)
-        tokens.extend([self.latent_id] * self.num_latents)
-        tokens.append(self.end_id)
-
-        # Add remaining steps
-        skip_steps = min(self.num_latents, len(sample["steps"]))
-        for step in sample["steps"][skip_steps:]:
-            tokens.extend(step)
-
-        # Add answer
-        tokens.extend(sample["answer"])
-
-        # Build labels (only compute loss on non-latent parts)
-        labels = [-100] * len(sample["question"])
-        labels.append(-100)
-        labels.extend([-100] * self.num_latents)
-        labels.append(-100)
-        remaining_len = len(tokens) - len(labels)
-        labels.extend(tokens[len(labels):])
-
-        return {
-            "input_ids": torch.tensor(tokens, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
-            "idx": sample["idx"],
-        }
-
-
-def collate_fn(batch):
-    """Collate function for dataloader"""
-    input_ids = [item["input_ids"] for item in batch]
-    labels = [item["labels"] for item in batch]
-    idxs = [item["idx"] for item in batch]
-
-    # Padding
-    max_len = max(len(ids) for ids in input_ids)
-    padded_input_ids = []
-    padded_labels = []
-    attention_mask = []
-
-    for ids, lbls in zip(input_ids, labels):
-        pad_len = max_len - len(ids)
-        padded_input_ids.append(torch.cat([ids, torch.zeros(pad_len, dtype=torch.long)]))
-        padded_labels.append(torch.cat([lbls, torch.full((pad_len,), -100, dtype=torch.long)]))
-        attention_mask.append(torch.cat([torch.ones(len(ids)), torch.zeros(pad_len)]))
-
-    return {
-        "input_ids": torch.stack(padded_input_ids),
-        "labels": torch.stack(padded_labels),
-        "attention_mask": torch.stack(attention_mask),
-        "idxs": idxs,
-    }
 
 
 def main():
@@ -168,13 +81,14 @@ def main():
         model_id = config.model.model_id
 
     print(f"\nLoading model from {model_id}")
-    model = GPT2LMHeadModel.from_pretrained(model_id)
+    base_model = GPT2LMHeadModel.from_pretrained(model_id)
     tokenizer = GPT2Tokenizer.from_pretrained(model_id)
     tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"  # Required for MyCollator
 
     # Add special tokens
     tokenizer.add_tokens(["<|start-latent|>", "<|end-latent|>", "<|latent|>"])
-    model.resize_token_embeddings(len(tokenizer))
+    base_model.resize_token_embeddings(len(tokenizer))
 
     start_id = tokenizer.convert_tokens_to_ids("<|start-latent|>")
     end_id = tokenizer.convert_tokens_to_ids("<|end-latent|>")
@@ -186,9 +100,17 @@ def main():
     with torch.no_grad():
         ref_id = tokenizer.encode("<", add_special_tokens=False)[0]
         for tid in [start_id, end_id, latent_id]:
-            model.transformer.wte.weight[tid] = model.transformer.wte.weight[ref_id]
-            model.lm_head.weight[tid] = model.lm_head.weight[ref_id]
+            base_model.transformer.wte.weight[tid] = base_model.transformer.wte.weight[ref_id]
+            base_model.lm_head.weight[tid] = base_model.lm_head.weight[ref_id]
 
+    # Wrap with Coconut (adds hidden state feedback)
+    model = Coconut(
+        base_model,
+        latent_token_id=latent_id,
+        start_latent_id=start_id,
+        end_latent_id=end_id,
+        eos_token_id=tokenizer.eos_token_id,
+    )
     model = model.to(device)
 
     # Load data
@@ -198,16 +120,21 @@ def main():
     max_train = getattr(config.data, 'max_train_samples', 5000)
     max_val = getattr(config.data, 'max_val_samples', 500)
 
-    train_data = load_data(train_path, tokenizer, max_size=max_train)
-    val_data = load_data(val_path, tokenizer, max_size=max_val)
+    # Tokenized datasets (HF Dataset)
+    train_base = get_dataset(train_path, tokenizer, max_size=max_train)
+    val_base = get_dataset(val_path, tokenizer, max_size=max_val)
 
-    print(f"  Train samples: {len(train_data)}")
-    print(f"  Val samples: {len(val_data)}")
+    # Raw data for answer lookup during eval
+    raw_val_data = json.load(open(val_path))[:max_val]
+
+    print(f"  Train samples: {len(train_base)}")
+    print(f"  Val samples: {len(val_base)}")
 
     # Training parameters
     c_thought = getattr(config.coconut, 'c_thought', 1)
     epochs_per_stage = getattr(config.coconut, 'epochs_per_stage', 3)
     max_stage = getattr(config.coconut, 'max_latent_stage', 3)
+    reset_optimizer = getattr(config.coconut, 'reset_optimizer', True)
 
     batch_size = getattr(config.training, 'batch_size', 16)
     num_epochs = getattr(config.training, 'num_epochs', 20)
@@ -222,28 +149,41 @@ def main():
     print(f"  c_thought: {c_thought}")
     print(f"  epochs_per_stage: {epochs_per_stage}")
     print(f"  max_stage: {max_stage}")
+    print(f"  reset_optimizer: {reset_optimizer}")
     print("=" * 50)
 
     # Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
+    collator = MyCollator(tokenizer=tokenizer, latent_id=latent_id)
+
     global_step = 0
     best_acc = 0
+    prev_stage = -1
 
     for epoch in range(num_epochs):
         # Calculate current stage
         stage = min(epoch // epochs_per_stage, max_stage)
         num_latents = stage * c_thought
 
+        # Reset optimizer when stage changes
+        if stage != prev_stage and reset_optimizer and prev_stage >= 0:
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+            print(f"  [Stage change {prev_stage}->{stage}] Optimizer reset")
+        prev_stage = stage
+
         print(f"\nEpoch {epoch+1}/{num_epochs} (Stage {stage}, {num_latents} latents)")
 
-        # Create dataset
-        train_dataset = CoconutDataset(train_data, num_latents, start_id, latent_id, end_id)
+        # Build training dataset for current stage
+        train_dataset = get_cot_latent_dataset(
+            stage, train_base, config.coconut,
+            start_id, latent_id, end_id,
+        )
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
-            collate_fn=collate_fn,
+            collate_fn=collator,
             num_workers=0,
             pin_memory=True,
         )
@@ -253,13 +193,19 @@ def main():
         total_loss = 0
         num_batches = 0
 
-        pbar = tqdm(train_loader, desc=f"Training")
+        pbar = tqdm(train_loader, desc="Training")
         for step, batch in enumerate(pbar):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+            position_ids = batch["position_ids"].to(device)
 
-            outputs = model(input_ids=input_ids, labels=labels, attention_mask=attention_mask)
+            outputs = model(
+                input_ids=input_ids,
+                labels=labels,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+            )
             loss = outputs.loss / grad_accum
 
             loss.backward()
@@ -280,9 +226,14 @@ def main():
         # Validation
         if (epoch + 1) % 2 == 0:
             model.eval()
-            val_dataset = CoconutDataset(val_data[:100], num_latents, start_id, latent_id, end_id)
+
+            # Build eval dataset: question + latent tokens only
+            val_dataset = get_question_latent_dataset(
+                stage, val_base, config.coconut,
+                start_id, latent_id, end_id,
+            )
             val_loader = torch.utils.data.DataLoader(
-                val_dataset, batch_size=1, collate_fn=collate_fn
+                val_dataset, batch_size=1, collate_fn=collator,
             )
 
             correct = 0
@@ -290,20 +241,20 @@ def main():
 
             print("  Evaluating...")
             with torch.no_grad():
-                for batch in tqdm(val_loader, desc="Eval"):
+                for i, batch in enumerate(tqdm(val_loader, desc="Eval")):
                     input_ids = batch["input_ids"].to(device)
+                    attention_mask = batch["attention_mask"].to(device)
+
                     outputs = model.generate(
                         input_ids=input_ids,
+                        attention_mask=attention_mask,
                         max_new_tokens=20,
-                        pad_token_id=tokenizer.eos_token_id,
-                        do_sample=False,
                     )
 
                     output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
                     pred_answer = output_text.split("#")[-1].strip()
 
-                    idx = batch["idxs"][0]
-                    true_answer = val_data[idx]["raw"]["answer"]
+                    true_answer = raw_val_data[i]["answer"]
 
                     if pred_answer == true_answer:
                         correct += 1
@@ -318,7 +269,9 @@ def main():
                 save_path = getattr(config.misc, 'save_path', './checkpoints')
                 os.makedirs(save_path, exist_ok=True)
 
-                torch.save(model.state_dict(), os.path.join(save_path, "best_model.pt"))
+                # Save base model (Coconut is just a wrapper)
+                model.base_causallm.save_pretrained(save_path)
+                tokenizer.save_pretrained(save_path)
                 print(f"  Saved best model!")
 
     print(f"\nTraining done! Best accuracy: {best_acc:.2%}")

@@ -14,6 +14,9 @@ coconut:
   max_latent_stage: 4
   epochs_per_stage: 3
   pad_latent_to_max: true
+  reset_optimizer: true     # Reset optimizer when stage changes
+  uniform_prob: 0.0         # Probability of random stage sampling (0=always use scheduled stage)
+  no_cot: false             # If true, skip all CoT steps
 
 # Training params (optimized for 32GB VRAM)
 training:
