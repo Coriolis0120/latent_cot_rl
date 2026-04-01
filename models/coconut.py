@@ -53,6 +53,30 @@ class Coconut(nn.Module):
         else:
             self.embedding = self.base_causallm.get_input_embeddings()
 
+    @staticmethod
+    def _to_legacy_cache(cache):
+        """Convert KV cache to legacy tuple format: ((k, v), ...)"""
+        if cache is None:
+            return None
+        # New DynamicCache format
+        if hasattr(cache, 'key_cache'):
+            return tuple(
+                (k, v) for k, v in zip(cache.key_cache, cache.value_cache)
+            )
+        # Already legacy format (tuple of tuples, possibly with extra elements)
+        return tuple((layer[0], layer[1]) for layer in cache)
+
+    @staticmethod
+    def _trim_cache(cache, trim_pos):
+        """Trim KV cache to keep only tokens before trim_pos."""
+        if cache is None:
+            return None
+        legacy = Coconut._to_legacy_cache(cache)
+        return tuple(
+            (k[:, :, :trim_pos, :], v[:, :, :trim_pos, :])
+            for k, v in legacy
+        )
+
     def forward(self, input_ids, attention_mask, labels, position_ids, **kwargs):
         """Forward pass with iterative latent hidden state feedback.
 
@@ -108,13 +132,7 @@ class Coconut(nn.Module):
 
             else:
                 # Subsequent passes: trim KV cache and reuse
-                past_key_values = [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
+                past_key_values = self._trim_cache(kv_cache, next_compute_range[0])
 
                 outputs = self.base_causallm(
                     inputs_embeds=inputs_embeds[
@@ -145,7 +163,7 @@ class Coconut(nn.Module):
             )
 
             hidden_states = outputs.hidden_states[-1]
-            kv_cache = outputs.past_key_values
+            kv_cache = self._to_legacy_cache(outputs.past_key_values)
 
             # Feedback: replace latent token embeddings with continuous thoughts
             filling_indices = [
@@ -186,13 +204,7 @@ class Coconut(nn.Module):
             attention_mask=attention_mask[:, : next_compute_range[1]],
             position_ids=position_ids[:, next_compute_range[0] : next_compute_range[1]],
             past_key_values=(
-                [
-                    (
-                        k[:, :, : next_compute_range[0], :],
-                        v[:, :, : next_compute_range[0], :],
-                    )
-                    for k, v in kv_cache
-                ]
+                self._trim_cache(kv_cache, next_compute_range[0])
                 if kv_cache
                 else None
             ),
