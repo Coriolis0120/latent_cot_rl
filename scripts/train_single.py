@@ -20,7 +20,7 @@ from tqdm import tqdm
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.collator import (
+from dataset.collator import (
     get_dataset,
     MyCollator,
     get_cot_latent_dataset,
