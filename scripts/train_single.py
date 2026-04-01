@@ -129,7 +129,7 @@ def collate_fn(batch):
     for ids, lbls in zip(input_ids, labels):
         pad_len = max_len - len(ids)
         padded_input_ids.append(torch.cat([ids, torch.zeros(pad_len, dtype=torch.long)]))
-        padded_labels.append(torch.cat([lbls, torch.tensor([-100] * pad_len)]))
+        padded_labels.append(torch.cat([lbls, torch.full((pad_len,), -100, dtype=torch.long)]))
         attention_mask.append(torch.cat([torch.ones(len(ids)), torch.zeros(pad_len)]))
 
     return {
