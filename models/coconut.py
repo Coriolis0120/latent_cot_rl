@@ -74,7 +74,10 @@ class Coconut(nn.Module):
         for layer_entry in cache:
             if isinstance(layer_entry, (tuple, list)):
                 trimmed.append(
-                    tuple(t[:, :, :trim_pos, :] for t in layer_entry)
+                    tuple(
+                        t[:, :, :trim_pos, :] if t is not None else None
+                        for t in layer_entry
+                    )
                 )
             else:
                 trimmed.append(layer_entry)
